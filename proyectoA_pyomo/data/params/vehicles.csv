@@ -1,0 +1,5 @@
+id,type,Q,speed_kph,fuel_eff_kmpl,fuel_price_per_l,cost_hour,fixed_cost,rango_util_km,jornada_max_h
+V_S1,pequeño,45,32,12,12000,30000,50000,220,8
+V_S2,pequeño,45,32,12,12000,30000,50000,220,8
+V_M1,mediano,70,28,9,12000,35000,70000,250,8
+V_L1,grande,110,24,6.5,12000,38000,90000,260,8

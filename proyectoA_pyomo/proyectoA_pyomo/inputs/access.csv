@@ -1,0 +1,7 @@
+node_id,veh_id,allowed
+CD1,V_L1,1
+CD1,V_M1,1
+CL1,V_L1,1
+CL1,V_M1,1
+CL2,V_L1,1
+CL2,V_M1,1

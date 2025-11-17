@@ -1,0 +1,5 @@
+vehicle,i,j,flow
+V_L1,CD1,CL2,1.5
+V_L1,CL2,CD1,0.0
+V_M1,CD1,CL1,2.0
+V_M1,CL1,CD1,0.0

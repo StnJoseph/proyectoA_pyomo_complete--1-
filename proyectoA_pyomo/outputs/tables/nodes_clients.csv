@@ -1,0 +1,11 @@
+id,name,lat,lon,demand
+CL1,Cedritos,4.73,-74.04,900
+CL2,Chapinero,4.65,-74.06,600
+CL3,Usaquén,4.71,-74.03,700
+CL4,Suba,4.74,-74.09,800
+CL5,Teusaquillo,4.64,-74.09,500
+CL6,Fontibón,4.67,-74.15,750
+CL7,Engativá,4.69,-74.12,650
+CL8,Kennedy,4.62,-74.16,850
+CL9,Bosa,4.6,-74.2,700
+CL10,San Cristóbal,4.57,-74.08,550
