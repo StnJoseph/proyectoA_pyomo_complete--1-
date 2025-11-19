@@ -21,7 +21,7 @@ def try_milp():
                 break
         if solver is None:
             return None, "No solver available"
-        res = solver.solve(m, tee=False)
+        res = solver.solve(m, tee=True)
         status = str(res.solver.status)
         if "ok" not in status.lower() and "optimal" not in str(res.solver.termination_condition).lower():
             return None, f"Solver status: {status}"
@@ -31,9 +31,9 @@ def try_milp():
 
 def export_solution(m):
     # Read input frames
-    centers = pd.read_csv(f"{DATA_DIR}/data/raw/nodes_centers.csv")
-    clients = pd.read_csv(f"{DATA_DIR}/data/raw/nodes_clients.csv")
-    vehicles = pd.read_csv(f"{DATA_DIR}/data/params/vehicles.csv")
+    centers = pd.read_csv(f"{DATA_DIR}/inputs/nodes_centers.csv")
+    clients = pd.read_csv(f"{DATA_DIR}/inputs/nodes_clients.csv")
+    vehicles = pd.read_csv(f"{DATA_DIR}/inputs/vehicles.csv")
     # Export x arcs
     sel = []
     for k in m.K:
@@ -43,7 +43,19 @@ def export_solution(m):
     sel_df = pd.DataFrame(sel)
     # fetch cost/time/dist from cache
     arcs_df = pd.read_csv(f"{DATA_DIR}/outputs/tables/arcs_cache.csv")
-    sel_df = sel_df.merge(arcs_df.rename(columns={"veh":"vehicle"}), on=["vehicle","i","j"], how="left").rename(columns={"i":"from","j":"to"})
+  
+    arcs_df = arcs_df.rename(columns={
+        "veh": "vehicle",
+        "i": "from",
+        "j": "to"
+    })
+    
+    sel_df = sel_df.merge(
+        arcs_df, 
+        on=["vehicle","from","to"], 
+        how="left"
+    )
+    
     sel_df.to_csv(f"{DATA_DIR}/outputs/tables/selected_arcs_detailed.csv", index=False)
 
     # Export flows
@@ -53,6 +65,7 @@ def export_solution(m):
             v = float(m.y[k,i,j].value) if m.y[k,i,j].value is not None else 0.0
             if v>1e-6:
                 flows.append({"vehicle":k,"from":i,"to":j,"flow":v})
+    
     flows_df = pd.DataFrame(flows)
     flows_df.to_csv(f"{DATA_DIR}/outputs/tables/flows_by_arc_per_vehicle.csv", index=False)
 
@@ -60,21 +73,40 @@ def export_solution(m):
     center_kpis = []
     for c in m.C:
         s = float(m.s[c].value) if m.s[c].value is not None else 0.0
-        cap = float(centers.set_index("id").loc[c,"cap"])
-        center_kpis.append({"center":c,"supply":s,"cap":cap,"utilization": s/cap if cap>0 else 0})
+        cap = float(centers.set_index("id").loc[c,"capacity"])
+        center_kpis.append({
+            "center":c,
+            "supply":s,
+            "cap":cap,
+            "utilization": s/cap if cap>0 else 0
+        })
     pd.DataFrame(center_kpis).to_csv(f"{DATA_DIR}/outputs/tables/center_kpis.csv", index=False)
 
     # KPIs vehicles
     veh_kpis = []
     for k in m.K:
-        dist = sum(float(m.dist[k,i,j]) * (1 if (m.x[k,i,j].value and m.x[k,i,j].value>0.5) else 0) for (i,j) in m.A)
-        # recompute time+cost from arcs cache
-        sub = arcs_df[(arcs_df["veh"]==k) & (arcs_df.apply(lambda r: int(m.x[k,r["i"],r["j"]].value>0.5) if (k,r["i"],r["j"]) else 0, axis=1))]
-        time = sub["time_h"].sum()
-        cost = sub["cost"].sum()
-        load = sum(float(m.y[k,i,j].value) for (i,j) in m.A if (m.y[k,i,j].value or 0)>1e-6 and j in m.I)
-        cap = float(vehicles.set_index("id").loc[k,"Q"])
-        veh_kpis.append({"vehicle":k,"distance_km":dist,"time_h":time,"cost":cost,"load_delivered":load,"capacity":cap})
+        used_arcs = sel_df[sel_df["vehicle"] == k]
+        dist = used_arcs["dist_km"].sum()
+        time = used_arcs["time_h"].sum()
+        cost = used_arcs["cost"].sum()
+
+        # carga entregada (flujo que llega a clientes)
+        load = 0.0
+        for (i, j) in m.A:
+            val = m.y[k, i, j].value
+            if val is not None and val > 1e-6 and j in list(m.I):
+                load += float(val)
+
+        cap = float(vehicles.set_index("id").loc[k, "Q"])
+        veh_kpis.append({
+            "vehicle": k,
+            "distance_km": dist,
+            "time_h": time,
+            "cost": cost,
+            "load_delivered": load,
+            "capacity": cap,
+        })
+        
     pd.DataFrame(veh_kpis).to_csv(f"{DATA_DIR}/outputs/tables/vehicle_kpis.csv", index=False)
 
 if __name__=="__main__":
