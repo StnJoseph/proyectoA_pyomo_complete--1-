@@ -13,21 +13,48 @@ def try_milp():
     try:
         from pyomo.environ import SolverFactory
         from model.build_model import build_model
+
         m = build_model(DATA_DIR)
+
         solver = None
-        for s in ["glpk","cbc","highs"]:
+        solver_name = None
+
+        # Prioridad: HiGHS > CBC > GLPK
+        for s in ["highs", "cbc", "glpk"]:
             if SolverFactory(s).available(exception_flag=False):
                 solver = SolverFactory(s)
+                solver_name = s
                 break
+
         if solver is None:
             return None, "No solver available"
+
+        TIME_LIMIT = 600  # segundos
+
+        if solver_name == "highs":
+            solver.options["time_limit"] = TIME_LIMIT
+        elif solver_name == "cbc":
+            solver.options["seconds"] = TIME_LIMIT
+        elif solver_name == "glpk":
+            solver.options["tmlim"] = TIME_LIMIT
+
+        print(f"Usando solver: {solver_name} con límite de {TIME_LIMIT} s\n")
+
         res = solver.solve(m, tee=True)
+
         status = str(res.solver.status)
-        if "ok" not in status.lower() and "optimal" not in str(res.solver.termination_condition).lower():
-            return None, f"Solver status: {status}"
-        return m, "OK"
+        term = str(res.solver.termination_condition)
+
+        # Aceptar soluciones óptimas o factibles
+        if ("optimal" in term.lower()) or ("feasible" in term.lower()):
+            return m, "OK"
+
+        return None, f"Solver status: {status}, termination: {term}"
+
     except Exception as e:
         return None, f"MILP error: {e}"
+
+
 
 def export_solution(m):
     # Read input frames

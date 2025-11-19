@@ -16,8 +16,8 @@ def build_inputs_from_cvrp_base():
     Procesa los datos originales de `data/Proyecto_Caso_Base`
     y los convierte al formato interno que tu modelo usa en `inputs/`.
     """
-    MAX_CLIENTS = 10   # <-- prueba con 10 clientes
-    MAX_VEHICLES = None 
+    # MAX_CLIENTS = 30   # <-- prueba con 10 clientes
+    # MAX_VEHICLES = None 
     ROOT = str(Path(__file__).resolve().parents[1])
 
     # ---------------------------
@@ -32,12 +32,12 @@ def build_inputs_from_cvrp_base():
     
     pivot = params.set_index("Parameter")["Value"]
 
-    if MAX_CLIENTS is not None:
-        # Ordenamos por algún ID estable y tomamos solo los primeros N
-        clients = clients.sort_values("StandardizedID").head(MAX_CLIENTS).copy()
+    # if MAX_CLIENTS is not None:
+    #     # Ordenamos por algún ID estable y tomamos solo los primeros N
+    #     clients = clients.sort_values("StandardizedID").head(MAX_CLIENTS).copy()
 
-    if MAX_VEHICLES is not None:
-        vehicles = vehicles.sort_values("StandardizedID").head(MAX_VEHICLES).copy()
+    # if MAX_VEHICLES is not None:
+    #     vehicles = vehicles.sort_values("StandardizedID").head(MAX_VEHICLES).copy()
     
     
     # ---------------------------
