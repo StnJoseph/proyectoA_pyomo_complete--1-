@@ -6,210 +6,322 @@ from pyomo.environ import (
     Objective, Constraint, minimize
 )
 
-def build_model(root_dir: str):
+def _read_first_existing(path_candidates):
     """
-    Construye el modelo Pyomo usando los archivos generados por el
-    preprocesamiento del Caso Base.
-
-    Espera encontrar:
-      - inputs/nodes_centers.csv   (id, lat, lon, capacity, is_center)
-      - inputs/nodes_clients.csv   (id, lat, lon, demand, is_center)
-      - inputs/vehicles.csv        (id, type, Q, speed_kph, fuel_eff_kmpl,
-                                    fuel_price_per_l, cost_hour,
-                                    fixed_cost, rango_util_km, jornada_max_h)
-      - outputs/tables/arcs_cache.csv (veh, i, j, dist_km, time_h, cost, allowed_pair)
+    Devuelve el primer CSV existente en la lista de paths.
+    Lanza FileNotFoundError si ninguno existe.
     """
+    for p in path_candidates:
+        if p.exists():
+            return pd.read_csv(p)
+    raise FileNotFoundError(f"Ninguno de los archivos existe: {path_candidates}")
 
-    root = Path(root_dir)
+def build_model(data_dir: str):
+    """
+    Construye el modelo Pyomo de LogistiCo.
 
-    # ------------------------------------------------------------------
-    # 1. Leer datos procesados
-    # ------------------------------------------------------------------
-    centers = pd.read_csv(root / "inputs/nodes_centers.csv")
-    clients = pd.read_csv(root / "inputs/nodes_clients.csv")
-    vehicles = pd.read_csv(root / "inputs/vehicles.csv")
-    arcs_cache = pd.read_csv(root / "outputs/tables/arcs_cache.csv")
+    Diseñado para:
+    - Caso Base (Proyecto_Caso_Base) usando inputs/ generados por preprocess.py
+    - Proyecto A Caso 2, siempre que preprocess.py también genere inputs/ coherentes.
 
-    m = ConcreteModel(name="ProyectoA_Urbano_BaseCase")
+    Supone que preprocess.py ya escribió:
+      inputs/nodes_centers.csv
+      inputs/nodes_clients.csv
+      inputs/vehicles.csv
+      outputs/tables/arcs_cache.csv
+    (y opcionalmente algún access.csv / access_matrix.csv)
+    """
+    root = Path(data_dir)
 
-    # ------------------------------------------------------------------
-    # 2. Conjuntos
-    # ------------------------------------------------------------------
-    m.C = Set(initialize=centers["id"].tolist(), ordered=False)              # centros
-    m.I = Set(initialize=clients["id"].tolist(), ordered=False)              # clientes
+    # ---------------------------
+    # 1. Leer datos
+    # ---------------------------
+    centers = _read_first_existing([
+        root / "inputs" / "nodes_centers.csv",
+        root / "data" / "raw" / "nodes_centers.csv",
+    ])
+
+    clients = _read_first_existing([
+        root / "inputs" / "nodes_clients.csv",
+        root / "data" / "raw" / "nodes_clients.csv",
+    ])
+
+    vehicles = _read_first_existing([
+        root / "inputs" / "vehicles.csv",
+        root / "data" / "params" / "vehicles.csv",
+    ])
+
+    # arcs_cache: preferimos el espejo en outputs/tables (coherente con solve.py)
+    arcs_cache = _read_first_existing([
+        root / "outputs" / "tables" / "arcs_cache.csv",
+        root / "inputs" / "arcs_cache.csv",
+    ])
+
+    # access es opcional (para Caso Base no existe)
+    access = None
+    for p in [
+        root / "data" / "params" / "access.csv",
+        root / "data" / "params" / "access_matrix.csv",
+        root / "inputs" / "access.csv",
+    ]:
+        if p.exists():
+            access = pd.read_csv(p)
+            break
+
+    # Normalizar tipos de id a string
+    centers["id"] = centers["id"].astype(str)
+    clients["id"] = clients["id"].astype(str)
+    vehicles["id"] = vehicles["id"].astype(str)
+
+    # ---------------------------
+    # 2. Normalizar columnas clave
+    # ---------------------------
+    # demanda: q o demand
+    if "q" in clients.columns:
+        demand_col = "q"
+    elif "demand" in clients.columns:
+        demand_col = "demand"
+    else:
+        raise KeyError(
+            "nodes_clients.csv debe tener una columna 'q' o 'demand' para la demanda."
+        )
+
+    # capacidad de centro: cap o capacity
+    if "cap" in centers.columns:
+        cap_col = "cap"
+    elif "capacity" in centers.columns:
+        cap_col = "capacity"
+    else:
+        # en Caso Base podría no ser tan relevante, pero mejor exigir algo
+        raise KeyError(
+            "nodes_centers.csv debe tener una columna 'cap' o 'capacity' para la capacidad del CD."
+        )
+
+    # vehículos: aseguramos las columnas que usa el modelo
+    vehicles = vehicles.set_index("id").copy()
+
+    # Q (capacidad de vehículo)
+    if "Q" not in vehicles.columns:
+        if "capacity" in vehicles.columns:
+            vehicles["Q"] = vehicles["capacity"]
+        elif "Capacity" in vehicles.columns:
+            vehicles["Q"] = vehicles["Capacity"]
+        else:
+            raise KeyError("vehicles.csv debe tener 'Q' o alguna columna de capacidad ('capacity').")
+
+    # fixed_cost, rango, jornada: si no existen, dar valores seguros
+    if "fixed_cost" not in vehicles.columns:
+        vehicles["fixed_cost"] = 0.0
+    if "rango_util_km" not in vehicles.columns:
+        vehicles["rango_util_km"] = 1e6  # rango prácticamente ilimitado si no se especifica
+    if "jornada_max_h" not in vehicles.columns:
+        vehicles["jornada_max_h"] = 1e6  # jornada muy grande si no se especifica
+
+    # ---------------------------
+    # 3. Normalizar arcs_cache ('veh','i','j' -> 'vehicle','from','to')
+    # ---------------------------
+    if "veh" in arcs_cache.columns and "vehicle" not in arcs_cache.columns:
+        arcs_cache = arcs_cache.rename(columns={
+            "veh": "vehicle",
+            "i": "from",
+            "j": "to"
+        })
+
+    # Asegurar columnas básicas
+    required_arc_cols = {"vehicle", "from", "to", "dist_km", "time_h", "cost"}
+    missing = required_arc_cols - set(arcs_cache.columns)
+    if missing:
+        raise KeyError(
+            f"arcs_cache.csv debe contener columnas {required_arc_cols}, faltan: {missing}"
+        )
+
+    arcs_cache["vehicle"] = arcs_cache["vehicle"].astype(str)
+    arcs_cache["from"] = arcs_cache["from"].astype(str)
+    arcs_cache["to"] = arcs_cache["to"].astype(str)
+
+    # ---------------------------
+    # 4. Construir modelo Pyomo
+    # ---------------------------
+    m = ConcreteModel(name="LogistiCo_CVRP")
+
+    # Conjuntos
+    m.C = Set(initialize=centers["id"].tolist(), ordered=False)
+    m.I = Set(initialize=clients["id"].tolist(), ordered=False)
     m.N = Set(initialize=list(centers["id"]) + list(clients["id"]), ordered=False)
-    m.K = Set(initialize=vehicles["id"].tolist(), ordered=False)             # vehículos
+    m.K = Set(initialize=vehicles.index.tolist(), ordered=False)
 
-    # Todos los arcos (i,j) con i != j
-    A_list = [(i, j) for i in m.N for j in m.N if i != j]
+    # Todos los arcos i != j sobre N
+    A_list = [(i, j) for i in m.N.value for j in m.N.value if i != j]
     m.A = Set(dimen=2, initialize=A_list, ordered=False)
 
-    # ------------------------------------------------------------------
-    # 3. Parámetros de demanda y capacidad de centros
-    # ------------------------------------------------------------------
-    q_map = clients.set_index("id")["demand"].to_dict()      # demanda por cliente
-    cap_c_map = centers.set_index("id")["capacity"].to_dict()  # capacidad por CD
-
+    # ---------------------------
+    # 5. Parámetros
+    # ---------------------------
+    # Demanda y capacidad de centros
+    q_map = clients.set_index("id")[demand_col].to_dict()
+    cap_c_map = centers.set_index("id")[cap_col].to_dict()
     m.q = Param(m.I, initialize=q_map, within=NonNegativeReals, default=0.0)
     m.cap_c = Param(m.C, initialize=cap_c_map, within=NonNegativeReals, default=0.0)
 
-    # ------------------------------------------------------------------
-    # 4. Parámetros de vehículos
-    # ------------------------------------------------------------------
-    vehicles_idx = vehicles.set_index("id")
+    # Parámetros de vehículos
+    Q_map = vehicles["Q"].to_dict()
+    f_map = vehicles["fixed_cost"].to_dict()
+    rango_map = vehicles["rango_util_km"].to_dict()
+    jornada_map = vehicles["jornada_max_h"].to_dict()
+    m.Q = Param(m.K, initialize=Q_map, within=NonNegativeReals, default=0.0)
+    m.f = Param(m.K, initialize=f_map, within=NonNegativeReals, default=0.0)
+    m.rango = Param(m.K, initialize=rango_map, within=NonNegativeReals, default=0.0)
+    m.jornada = Param(m.K, initialize=jornada_map, within=NonNegativeReals, default=0.0)
 
-    Q_map        = vehicles_idx["Q"].to_dict()
-    f_map        = vehicles_idx["fixed_cost"].to_dict()
-    rango_map    = vehicles_idx["rango_util_km"].to_dict()
-    jornada_map  = vehicles_idx["jornada_max_h"].to_dict()
+    # Acceso urbano A_{i,k} (si no hay archivo, todo permitido = 1)
+    access_idx = {}
+    if access is not None and {"node", "vehicle", "allowed"} <= set(access.columns):
+        access["node"] = access["node"].astype(str)
+        access["vehicle"] = access["vehicle"].astype(str)
+        access_idx = access.set_index(["node", "vehicle"])["allowed"].to_dict()
 
-    m.Q      = Param(m.K, initialize=Q_map,     within=NonNegativeReals, default=0.0)
-    m.f      = Param(m.K, initialize=f_map,     within=NonNegativeReals, default=0.0)
-    m.rango  = Param(m.K, initialize=rango_map, within=NonNegativeReals, default=0.0)
-    m.jornada= Param(m.K, initialize=jornada_map, within=NonNegativeReals, default=0.0)
+    def A_init(m_, i, k):
+        # Si no hay info de acceso, o no hay par específico, por defecto 1
+        return float(access_idx.get((i, k), 1.0))
 
-    # ------------------------------------------------------------------
-    # 5. Acceso urbano A_{i,k}
-    #    En el Caso Base no hay restricciones de acceso:
-    #    todos los vehículos pueden visitar todos los nodos.
-    # ------------------------------------------------------------------
-    def A_init(m, i, k):
-        return 1.0
     m.A_access = Param(m.N, m.K, initialize=A_init,
                        within=NonNegativeReals, default=1.0)
 
-    # ------------------------------------------------------------------
-    # 6. Costos, tiempos y distancias por (k,i,j) usando arcs_cache
-    # ------------------------------------------------------------------
-    # arcs_cache: veh, i, j, dist_km, time_h, cost, allowed_pair
-    arcs_cache["key"] = list(zip(arcs_cache["veh"],
-                                 arcs_cache["i"],
-                                 arcs_cache["j"]))
-
+    # Costos/tiempos/distancias por (k,i,j) desde arcs_cache
+    arcs_cache["key"] = list(zip(
+        arcs_cache["vehicle"], arcs_cache["from"], arcs_cache["to"]
+    ))
     cost_map = dict(zip(arcs_cache["key"], arcs_cache["cost"]))
     time_map = dict(zip(arcs_cache["key"], arcs_cache["time_h"]))
     dist_map = dict(zip(arcs_cache["key"], arcs_cache["dist_km"]))
 
-    def cost_init(m, k, i, j):
+    def cost_init(m_, k, i, j):
         return float(cost_map.get((k, i, j), 1e9))
 
-    def time_init(m, k, i, j):
+    def time_init(m_, k, i, j):
         return float(time_map.get((k, i, j), 1e6))
 
-    def dist_init(m, k, i, j):
+    def dist_init(m_, k, i, j):
         return float(dist_map.get((k, i, j), 1e6))
 
     m.cost = Param(m.K, m.A, initialize=cost_init, within=NonNegativeReals)
     m.time = Param(m.K, m.A, initialize=time_init, within=NonNegativeReals)
     m.dist = Param(m.K, m.A, initialize=dist_init, within=NonNegativeReals)
 
-    # ------------------------------------------------------------------
-    # 7. Variables
-    # ------------------------------------------------------------------
-    m.x = Var(m.K, m.A, domain=Binary)                # 1 si arco (i,j) usado por k
-    m.y = Var(m.K, m.A, domain=NonNegativeReals)      # flujo por arco
-    m.z = Var(m.C, m.K, domain=Binary)                # 1 si k asignado a c
-    m.s = Var(m.C, domain=NonNegativeReals)           # suministro total desde c
-    m.u = Var(m.K, domain=Binary)                     # 1 si vehículo k se activa
+    # ---------------------------
+    # 6. Variables
+    # ---------------------------
+    m.x = Var(m.K, m.A, domain=Binary)
+    m.y = Var(m.K, m.A, domain=NonNegativeReals)
+    m.z = Var(m.C, m.K, domain=Binary)
+    m.s = Var(m.C, domain=NonNegativeReals)
+    m.u = Var(m.K, domain=Binary)
 
-    # ------------------------------------------------------------------
-    # 8. Función objetivo
-    # ------------------------------------------------------------------
-    def obj_rule(m):
-        return sum(m.cost[k, i, j] * m.x[k, i, j] for k in m.K for (i, j) in m.A) + \
-               sum(m.f[k] * m.u[k] for k in m.K)
+    # ---------------------------
+    # 7. Función objetivo
+    # ---------------------------
+    def obj_rule(m_):
+        return sum(m_.cost[k, i, j] * m_.x[k, (i, j)]
+                   for k in m_.K for (i, j) in m_.A) + \
+               sum(m_.f[k] * m_.u[k] for k in m_.K)
 
     m.OBJ = Objective(rule=obj_rule, sense=minimize)
 
-    # ------------------------------------------------------------------
-    # 9. Restricciones
-    # ------------------------------------------------------------------
+    # ---------------------------
+    # 8. Restricciones
+    # ---------------------------
 
-    # Visita única por cliente (una entrada y una salida totales entre todos los k)
-    def visit_in_rule(m, i):
-        return sum(m.x[k, j, i] for k in m.K for (j, ii) in m.A if ii == i) == 1
+    # Visita única por cliente
+    def visit_in_rule(m_, i):
+        return sum(m_.x[k, (j, i)] for k in m_.K for (j, ii) in m_.A if ii == i) == 1
 
-    def visit_out_rule(m, i):
-        return sum(m.x[k, i, j] for k in m.K for (ii, j) in m.A if ii == i) == 1
+    def visit_out_rule(m_, i):
+        return sum(m_.x[k, (i, j)] for k in m_.K for (ii, j) in m_.A if ii == i) == 1
 
     m.VisitIn = Constraint(m.I, rule=visit_in_rule)
     m.VisitOut = Constraint(m.I, rule=visit_out_rule)
 
     # Continuidad por vehículo en cada cliente
-    def cont_rule(m, k, i):
-        return (sum(m.x[k, i, j] for (ii, j) in m.A if ii == i) -
-                sum(m.x[k, j, i] for (j, ii) in m.A if ii == i) == 0)
+    def cont_rule(m_, k, i):
+        return (
+            sum(m_.x[k, (i, j)] for (ii, j) in m_.A if ii == i) -
+            sum(m_.x[k, (j, i)] for (j, ii) in m_.A if ii == i)
+        ) == 0
 
     m.Continuity = Constraint(m.K, m.I, rule=cont_rule)
 
     # Salida/regreso al mismo CD por vehículo
-    def start_center_rule(m, k, c):
-        return sum(m.x[k, c, j] for (cc, j) in m.A if cc == c) == m.z[c, k]
+    def start_center_rule(m_, k, c):
+        return sum(m_.x[k, (c, j)] for (cc, j) in m_.A if cc == c) == m_.z[c, k]
 
-    def end_center_rule(m, k, c):
-        return sum(m.x[k, i, c] for (i, cc) in m.A if cc == c) == m.z[c, k]
+    def end_center_rule(m_, k, c):
+        return sum(m_.x[k, (i, c)] for (i, cc) in m_.A if cc == c) == m_.z[c, k]
 
     m.StartAtCenter = Constraint(m.K, m.C, rule=start_center_rule)
-    m.EndAtCenter   = Constraint(m.K, m.C, rule=end_center_rule)
+    m.EndAtCenter = Constraint(m.K, m.C, rule=end_center_rule)
 
     # Cada vehículo a lo sumo un CD; u_k = sum_c z_{ck}
-    def one_center_rule(m, k):
-        return sum(m.z[c, k] for c in m.C) == m.u[k]
+    def one_center_rule(m_, k):
+        return sum(m_.z[c, k] for c in m_.C) == m_.u[k]
 
     m.AssignOneCenter = Constraint(m.K, rule=one_center_rule)
 
     # Capacidad por arco (y <= Q * x)
-    def cap_arc_rule(m, k, i, j):
-        return m.y[k, i, j] <= m.Q[k] * m.x[k, i, j]
+    def cap_arc_rule(m_, k, i, j):
+        return m_.y[k, (i, j)] <= m_.Q[k] * m_.x[k, (i, j)]
 
     m.CapArc = Constraint(m.K, m.A, rule=cap_arc_rule)
 
     # Conservación de flujo en clientes (agregado sobre k)
-    def cons_client_rule(m, i):
-        return (sum(m.y[k, j, i] for k in m.K for (j, ii) in m.A if ii == i) -
-                sum(m.y[k, i, j] for k in m.K for (ii, j) in m.A if ii == i)
-                == m.q[i])
+    def cons_client_rule(m_, i):
+        return (
+            sum(m_.y[k, (j, i)] for k in m_.K for (j, ii) in m_.A if ii == i) -
+            sum(m_.y[k, (i, j)] for k in m_.K for (ii, j) in m_.A if ii == i)
+        ) == m_.q[i]
 
     m.FlowClients = Constraint(m.I, rule=cons_client_rule)
 
     # Balance en centros y capacidad de centro
-    def cons_center_rule(m, c):
-        return (sum(m.y[k, c, j] for k in m.K for (cc, j) in m.A if cc == c) -
-                sum(m.y[k, j, c] for k in m.K for (j, cc) in m.A if cc == c)
-                == m.s[c])
+    def cons_center_rule(m_, c):
+        return (
+            sum(m_.y[k, (c, j)] for k in m_.K for (cc, j) in m_.A if cc == c) -
+            sum(m_.y[k, (j, c)] for k in m_.K for (j, cc) in m_.A if cc == c)
+        ) == m_.s[c]
 
     m.FlowCenters = Constraint(m.C, rule=cons_center_rule)
 
-    def cap_center_rule(m, c):
-        return m.s[c] <= m.cap_c[c]
+    def cap_center_rule(m_, c):
+        return m_.s[c] <= m_.cap_c[c]
 
     m.CenterCap = Constraint(m.C, rule=cap_center_rule)
 
-    # Acceso urbano (en Caso Base siempre vale 1)
-    def access_i_rule(m, k, i, j):
-        return m.x[k, i, j] <= m.A_access[i, k]
+    # Acceso urbano (extremos del arco deben ser permitidos)
+    def access_i_rule(m_, k, i, j):
+        return m_.x[k, (i, j)] <= m_.A_access[i, k]
 
-    def access_j_rule(m, k, i, j):
-        return m.x[k, i, j] <= m.A_access[j, k]
+    def access_j_rule(m_, k, i, j):
+        return m_.x[k, (i, j)] <= m_.A_access[j, k]
 
     m.AccessI = Constraint(m.K, m.A, rule=access_i_rule)
     m.AccessJ = Constraint(m.K, m.A, rule=access_j_rule)
 
     # Rango útil (km) por vehículo
-    def range_rule(m, k):
-        return sum(m.dist[k, i, j] * m.x[k, i, j] for (i, j) in m.A) <= m.rango[k] * m.u[k]
+    def range_rule(m_, k):
+        return sum(m_.dist[k, (i, j)] * m_.x[k, (i, j)] for (i, j) in m_.A) <= \
+               m_.rango[k] * m_.u[k]
 
     m.Range = Constraint(m.K, rule=range_rule)
 
     # Jornada máxima (horas) por vehículo
-    def jornada_rule(m, k):
-        return sum(m.time[k, i, j] * m.x[k, i, j] for (i, j) in m.A) <= m.jornada[k] * m.u[k]
+    def jornada_rule(m_, k):
+        return sum(m_.time[k, (i, j)] * m_.x[k, (i, j)] for (i, j) in m_.A) <= \
+               m_.jornada[k] * m_.u[k]
 
     m.Jornada = Constraint(m.K, rule=jornada_rule)
 
     # Suficiencia de oferta total
-    def supply_cover_rule(m):
-        return sum(m.s[c] for c in m.C) == sum(m.q[i] for i in m.I)
+    def supply_cover_rule(m_):
+        return sum(m_.s[c] for c in m_.C) == sum(m_.q[i] for i in m_.I)
 
     m.SupplyCover = Constraint(rule=supply_cover_rule)
 

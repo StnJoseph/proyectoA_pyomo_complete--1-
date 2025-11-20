@@ -1,0 +1,2 @@
+VehicleId,DepotId,InitialLoad,RouteSequence,ClientsServed,DemandsSatisfied,TotalDistance,TotalTime,FuelCost
+small van,CD01,0.0,CD01,0,,47.47,113.88000000000001,158900.082

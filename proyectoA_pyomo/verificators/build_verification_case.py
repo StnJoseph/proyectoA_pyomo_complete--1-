@@ -1,23 +1,16 @@
-# build_verificacion_caso1.py
-# Genera verificacion_caso1.csv a partir de la solución del modelo
-#
-# Requiere:
-# - inputs/nodes_clients.csv
-# - inputs/nodes_centers.csv
-# - inputs/vehicles.csv
-# - outputs/tables/selected_arcs_detailed.csv
-#
-# Salida:
-# - verificacion_caso1.csv en la raíz del proyecto
-
 from pathlib import Path
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[0]
+# Carpeta raíz del proyecto (un nivel por encima de 'verificators')
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-INPUTS_DIR = ROOT / "inputs"
-TABLES_DIR = ROOT / "outputs" / "tables"
-VERIF_PATH = ROOT / "verificacion_caso1.csv"
+# Directorios de entrada y tablas
+INPUTS_DIR = PROJECT_ROOT / "inputs"
+TABLES_DIR = PROJECT_ROOT / "outputs" / "tables"
+
+# Directorio y path de verificación
+VERIF_DIR = PROJECT_ROOT / "verificators" / "outputs"
+VERIF_PATH = VERIF_DIR / "verificacion_caso1.csv"
 
 
 def build_verificacion():
@@ -34,7 +27,6 @@ def build_verificacion():
     veh_cap = vehicles.set_index("id")["Q"].to_dict()
 
     # Asegurarnos de que tenemos dist_km, time_h, cost en sel_df
-    # (si por alguna razón no están, habría que volver a revisar export_solution)
     for col in ["dist_km", "time_h", "cost"]:
         if col not in sel.columns:
             raise ValueError(f"Falta la columna '{col}' en selected_arcs_detailed.csv")
@@ -89,33 +81,38 @@ def build_verificacion():
 
         # Distancia / tiempo / costo totales del vehículo
         total_dist = arcs_v["dist_km"].sum()
-        total_time = arcs_v["time_h"].sum()
-        total_cost = arcs_v["cost"].sum()  # en tu caso base = FuelCost
+        total_time_min = arcs_v["time_h"].sum() * 60.0  # <-- tiempo en minutos
+        total_cost = arcs_v["cost"].sum()  # aquí asumes que 'cost' = FuelCost en el caso base
 
-        # Carga inicial: aquí usamos la capacidad del vehículo
-        initial_load = float(veh_cap.get(veh_id, total_demand_served))
+        # Carga inicial: usamos la carga realmente servida
+        initial_load = float(total_demand_served)
 
         # Construir campos tipo string
         route_seq_str = "-".join(seq) if seq else ""
-        clients_served_str = "-".join(client_ids) if client_ids else ""
-        demands_str = "-".join(str(int(d)) if d.is_integer() else str(d) for d in demands)
+        demands_str = "-".join(
+            str(int(d)) if float(d).is_integer() else str(d)
+            for d in demands
+        )
+
+        # Número de clientes atendidos
+        clients_served = len(client_ids)
 
         row = {
             "VehicleId": veh_id,
             "DepotId": depot,
             "InitialLoad": initial_load,
             "RouteSequence": route_seq_str,
-            "ClientsServed": clients_served_str,
+            "ClientsServed": clients_served,        # <-- ahora es un entero
             "DemandsSatisfied": demands_str,
             "TotalDistance": total_dist,
-            "TotalTime": total_time,
+            "TotalTime": total_time_min,            # <-- en minutos
             "FuelCost": total_cost,
         }
         rows.append(row)
 
     verif_df = pd.DataFrame(rows)
 
-    # Ordenar columnas en el orden que pide el README
+    # Ordenar columnas en el orden que pide el enunciado
     cols_order = [
         "VehicleId",
         "DepotId",

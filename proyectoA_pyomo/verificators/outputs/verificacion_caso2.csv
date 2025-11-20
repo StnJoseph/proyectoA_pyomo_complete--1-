@@ -1,0 +1,2 @@
+VehicleId,VehicleType,InitialLoad,RouteSequence,ClientsServed,DemandSatisfied,ArrivalTimes,TotalDistance,TotalTime,Cost
+small van,V001,101.0,CD05 - C002 - C001 - C004 - C006 - C005 - C003 - C008 - C007 - C009 - CD05,9,15 - 12 - 6 - 11 - 5 - 15 - 10 - 12 - 15,08:05 - 08:19 - 08:20 - 08:34 - 08:54 - 08:56 - 09:09 - 09:20 - 09:41,47.47,1.8980000000000001,158900.082
