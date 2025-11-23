@@ -188,25 +188,38 @@ def build_verification_case2(start_hour=8.0):
             total_cost = float(used["cost"].sum())
 
         route_str = "-".join(seq)
-        veh_type = veh_type_map.get(veh_id, "NA")
-        total_time_min = total_time * 60.0
+        depot_id = start                    # centro de inicio
+        total_time_min = total_time * 60.0  # minutos
 
         rows.append(
             {
                 "VehicleId": veh_id,
-                "VehicleType": veh_type,
+                "DepotId": depot_id,
                 "InitialLoad": initial_load,
                 "RouteSequence": route_str,
                 "ClientsServed": len(clients_seq),
-                "DemandSatisfied": demand_str,
-                "ArrivalTimes": arrival_str,
+                "DemandsSatisfied": demand_str,
                 "TotalDistance": total_dist,
                 "TotalTime": total_time_min,
-                "Cost": total_cost,
+                "FuelCost": total_cost,  # usamos el costo total como FuelCost
             }
         )
 
+
     verif_df = pd.DataFrame(rows)
+
+    cols = [
+        "VehicleId",
+        "DepotId",
+        "InitialLoad",
+        "RouteSequence",
+        "ClientsServed",
+        "DemandsSatisfied",
+        "TotalDistance",
+        "TotalTime",
+        "FuelCost",
+    ]
+    verif_df = verif_df[cols]
 
     # Guardamos en outputs/verificacion_caso2.csv
     out_path = DATA_DIR / "verificators" / "outputs" / "verificacion_caso2.csv"
