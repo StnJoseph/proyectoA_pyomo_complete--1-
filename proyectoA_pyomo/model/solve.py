@@ -1,6 +1,8 @@
 
 import os, json, pandas as pd, numpy as np
+from pyomo.opt import SolverStatus, TerminationCondition
 from pathlib import Path
+
 
 DATA_DIR = str(Path(__file__).resolve().parents[1])
 
@@ -29,7 +31,7 @@ def try_milp():
         if solver is None:
             return None, "No solver available"
 
-        TIME_LIMIT = 600  # segundos
+        TIME_LIMIT = 600  # <----------------------------- TIME LIMIT EN SEGUNDOS
 
         if solver_name == "highs":
             solver.options["time_limit"] = TIME_LIMIT
@@ -42,14 +44,26 @@ def try_milp():
 
         res = solver.solve(m, tee=True)
 
-        status = str(res.solver.status)
-        term = str(res.solver.termination_condition)
+        status    = res.solver.status
+        term_cond = res.solver.termination_condition
 
-        # Aceptar soluciones óptimas o factibles
-        if ("optimal" in term.lower()) or ("feasible" in term.lower()):
+        print("Solver status:", status)
+        print("Termination condition:", term_cond)
+
+        # 1. Solución óptima o factible
+        if term_cond in (TerminationCondition.optimal,
+                        TerminationCondition.feasible):
+            print("→ Usando solución (optimal/feasible).")
             return m, "OK"
 
-        return None, f"Solver status: {status}, termination: {term}"
+        # 2. Time limit pero con solución factible encontrada
+        if term_cond == TerminationCondition.maxTimeLimit and \
+        status in (SolverStatus.ok, SolverStatus.aborted):
+            print("→ Time limit reached PERO con incumbente factible. Usando mejor solución encontrada.")
+            return m, "TIME_LIMIT_FEASIBLE"
+
+        # 3. De lo contrario, fallo real
+        return None, f"Solver status: {status}, termination: {term_cond}"
 
     except Exception as e:
         return None, f"MILP error: {e}"

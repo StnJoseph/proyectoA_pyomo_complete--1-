@@ -154,8 +154,8 @@ def build_verification_case2(start_hour=8.0):
 
         # Demandas atendidas en orden
         demands = [float(demand_map.get(c, 0.0)) for c in clients_seq]
-        demand_str = " - ".join(
-            str(int(d)) if abs(d - int(d)) < 1e-6 else f"{d}"
+        demand_str = "-".join(
+            str(int(d)) if abs(d - int(d)) < 1e-6 else f"{d:.1f}"
             for d in demands
         )
 
@@ -170,7 +170,9 @@ def build_verification_case2(start_hour=8.0):
             if nxt in client_ids:
                 arrival_times.append(_hhmm_from_hours(t))
             current = nxt
-        arrival_str = " - ".join(arrival_times)
+        arrival_str = "-".join(arrival_times)
+        
+        initial_load = sum(demands)
 
         # Totales de dist, tiempo, costo, carga
         if veh_id in veh_kpis_idx.index:
@@ -178,17 +180,16 @@ def build_verification_case2(start_hour=8.0):
             total_dist = float(row_kpi["distance_km"])
             total_time = float(row_kpi["time_h"])
             total_cost = float(row_kpi["cost"])
-            initial_load = float(row_kpi.get("load_delivered", sum(demands)))
         else:
-            # Fallback (no debería pasar si se corrió solve.py)
+            # Fallback
             used = veh_arcs
             total_dist = float(used["dist_km"].sum())
             total_time = float(used["time_h"].sum())
             total_cost = float(used["cost"].sum())
-            initial_load = float(sum(demands))
 
-        route_str = " - ".join(seq)
+        route_str = "-".join(seq)
         veh_type = veh_type_map.get(veh_id, "NA")
+        total_time_min = total_time * 60.0
 
         rows.append(
             {
@@ -200,7 +201,7 @@ def build_verification_case2(start_hour=8.0):
                 "DemandSatisfied": demand_str,
                 "ArrivalTimes": arrival_str,
                 "TotalDistance": total_dist,
-                "TotalTime": total_time,
+                "TotalTime": total_time_min,
                 "Cost": total_cost,
             }
         )

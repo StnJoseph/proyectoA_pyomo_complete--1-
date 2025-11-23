@@ -1,5 +1,5 @@
 parameter,value
-C_fixed,0
-C_dist,0
-C_time,0
-fuel_price,16300
+C_fixed,50000.0
+C_dist,2500.0
+C_time,7600.0
+fuel_price,16300.0
