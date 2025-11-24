@@ -31,7 +31,7 @@ def try_milp():
         if solver is None:
             return None, "No solver available"
 
-        TIME_LIMIT = 600  # <----------------------------- TIME LIMIT EN SEGUNDOS
+        TIME_LIMIT = 1200  # <----------------------------- TIME LIMIT EN SEGUNDOS
 
         if solver_name == "highs":
             solver.options["time_limit"] = TIME_LIMIT
@@ -133,10 +133,20 @@ def export_solution(m):
 
         # carga entregada (flujo que llega a clientes)
         load = 0.0
-        for (i, j) in m.A:
-            val = m.y[k, i, j].value
-            if val is not None and val > 1e-6 and j in list(m.I):
-                load += float(val)
+        for i in m.I:  # Para cada cliente
+            # Flujo neto = entra - sale
+            flow_in = sum(
+                float(m.y[k, j, i].value or 0.0)
+                for (j, ii) in m.A if ii == i
+            )
+            flow_out = sum(
+                float(m.y[k, i, j].value or 0.0)
+                for (ii, j) in m.A if ii == i
+            )
+            # La demanda satisfecha es el flujo neto
+            delivered = flow_in - flow_out
+            if delivered > 1e-6:
+                load += delivered
 
         cap = float(vehicles.set_index("id").loc[k, "Q"])
         veh_kpis.append({

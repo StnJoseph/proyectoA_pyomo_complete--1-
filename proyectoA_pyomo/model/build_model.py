@@ -21,7 +21,7 @@ def build_model(data_dir: str):
     Construye el modelo Pyomo de LogistiCo.
 
     Diseñado para:
-    - Caso Base (Proyecto_Caso_Base) usando inputs/ generados por preprocess.py
+    - Caso Base (Proyecto_A_Caso1) usando inputs/ generados por preprocess.py
     - Proyecto A Caso 2, siempre que preprocess.py también genere inputs/ coherentes.
 
     Supone que preprocess.py ya escribió:

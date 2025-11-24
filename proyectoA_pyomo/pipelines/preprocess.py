@@ -13,7 +13,7 @@ def haversine_km(lat1, lon1, lat2, lon2):
 
 def build_inputs_from_base():
     """
-    Procesa los datos originales de `data/Proyecto_Caso_Base`
+    Procesa los datos originales de `data/Proyecto_A_Caso1`
     y los convierte al formato interno que tu modelo usa en `inputs/`.
     """
     # MAX_CLIENTS = 30   # <-- prueba con 10 clientes
@@ -23,7 +23,7 @@ def build_inputs_from_base():
     # ---------------------------
     # 1. Leer datos originales
     # ---------------------------
-    base = Path(f"{ROOT}/data/Proyecto_Caso_Base")
+    base = Path(f"{ROOT}/data/Proyecto_A_Caso1")
 
     clients = pd.read_csv(base / "clients.csv")
     vehicles = pd.read_csv(base / "vehicles.csv")
@@ -517,7 +517,7 @@ if __name__=="__main__":
     # build_inputs_from_base()
     
     # Caso 2
-    build_inputs_from_caso2()
+    # build_inputs_from_caso2()
     
     # Caso 3
-    # build_inputs_from_caso3(max_clients=20)
+    build_inputs_from_caso3(max_clients=20)
